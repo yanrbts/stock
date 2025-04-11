@@ -1,0 +1,5 @@
+asyncio
+akshare
+click
+tabulate
+tqdm

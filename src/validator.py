@@ -1,18 +1,31 @@
 import akshare as ak
 import pandas as pd
 from datetime import datetime, timedelta
-from log import CPrint
 import os
+from email_sender import QQSender
+from log import CPrint
 
 # 定义导出的名称
 __all__ = ["PredictionValidator"]
 
 class PredictionValidator:
-    def __init__(self, csv_file="best_stock.csv", forecast_days=5):
+    def __init__(self, csv_file="best_stock.csv", forecast_days=5, \
+                sender_email=None, sender_password=None, receiver_email=None):
         self.csv_file = csv_file
         self.forecast_days = forecast_days  # 预测天数，默认 5 天
         self.log = CPrint()
         self.df = None
+        self.receiver_email = receiver_email
+        # 初始化 QQSender
+        if sender_email and sender_password and receiver_email:
+            self.email_sender = QQSender(
+                email=sender_email,
+                auth_code=sender_password
+            )
+        else:
+            self.email_sender = None
+            self.log.warning("未提供邮箱配置，邮件发送功能不可用")
+
         self.load_data()
 
     def load_data(self):
@@ -37,9 +50,19 @@ class PredictionValidator:
                 end_date=end_date_str,
                 adjust="qfq"
             )
-            if stock_data.empty or stock_data["日期"].iloc[-1] < end_date_str:
-                self.log.error(f"未获取到 {symbol} 在 {end_date_str} 的数据")
+            
+            if stock_data.empty:
+                self.log.error(f"未获取到 {symbol} 在 {start_date_str} 到 {end_date_str} 之间的数据")
                 return None
+            
+            # 将日期列转换为 datetime.date 对象进行比较
+            last_date = pd.to_datetime(stock_data["日期"]).iloc[-1].date()
+            target_date = target_date.date()  # 转换为 date 对象
+            
+            if last_date < target_date:
+                self.log.error(f"未获取到 {symbol} 在 {end_date_str} 的数据，最后可用日期是 {last_date}")
+                return None
+
             return stock_data["收盘"].iloc[-1]
         except Exception as e:
             self.log.error(f"获取 {symbol} 数据失败: {e}")
@@ -103,8 +126,20 @@ class PredictionValidator:
             self.log.error("没有可验证的预测结果")
             return
         
+        # 格式化邮件正文
+        email_body = "=== 股票预测验证结果 ===\n\n"
+        for res in results:
+            email_body += f"股票: {res['股票代码']} ({res['股票名称']})\n"
+            email_body += f"预测日期: {res['预测日期']}\n"
+            email_body += f"初始价格: {res['初始价格']:.2f}\n"
+            email_body += f"目标日期: {res['目标日期']}\n"
+            email_body += f"实际价格: {res['实际价格']:.2f}\n"
+            email_body += f"价格变化: {res['价格变化']:.2f}%\n"
+            email_body += f"预测趋势: {res['预测趋势']}\n"
+            email_body += f"准确性: {'准确' if res['准确性'] else '错误'}\n\n"
+        
         # 输出每个预测的结果
-        self.log.info("\n=== 预测验证结果 ===")
+        self.log.info("=== 预测验证结果 ===")
         for res in results:
             self.log.info(f"股票: {res['股票代码']} ({res['股票名称']})")
             self.log.info(f"预测日期: {res['预测日期']}")
@@ -117,17 +152,37 @@ class PredictionValidator:
                 self.log.success("预测准确")
             else:
                 self.log.error("预测错误")
-            print("\n")
         
         # 计算准确百分比
         total_predictions = len(results)
         accurate_predictions = sum(1 for res in results if res["准确性"])
         accuracy_percentage = (accurate_predictions / total_predictions) * 100
+
+        email_body += f"总预测次数: {total_predictions}\n"
+        email_body += f"准确预测次数: {accurate_predictions}\n"
+        email_body += f"预测准确百分比: {accuracy_percentage:.2f}%\n"
         
         self.log.info(f"总预测次数: {total_predictions}")
         self.log.info(f"准确预测次数: {accurate_predictions}")
         self.log.success(f"预测准确百分比: {accuracy_percentage:.2f}%")
 
+        # 发送邮件
+        if self.email_sender:
+            try:
+                subject = f"股票预测验证结果 - {current_date.strftime('%Y-%m-%d')}"
+                self.email_sender.send(self.receiver_email, subject, email_body)
+            except Exception as e:
+                self.log.error(f"发送邮件失败: {e}")
+        else:
+            self.log.warning("未配置邮件发送器，跳过发送邮件")
+
 if __name__ == "__main__":
-    validator = PredictionValidator()
+    # 替换为您的邮箱配置
+    validator = PredictionValidator(
+        csv_file="best_stock.csv",
+        forecast_days=5,
+        sender_email="772166784@qq.com",            # 替换为您的发送者邮箱
+        sender_password="wdjvptwkfcpmbfie",         # 替换为您的应用专用密码
+        receiver_email="772166784@qq.com"           # 替换为接收者邮箱
+    )
     validator.validate_all_predictions()

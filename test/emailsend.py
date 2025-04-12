@@ -2,13 +2,11 @@ import smtplib
 import time
 from email.mime.text import MIMEText
 import traceback
-from log import CPrint
 
 class QQSender:
     def __init__(self, email, auth_code):
         self.email = email
         self.auth_code = auth_code
-        self.log = CPrint()
         
     def send(self, to, subject, content, max_retries=3):
         msg = MIMEText(content, 'plain', 'utf-8')
@@ -22,10 +20,10 @@ class QQSender:
                 server.login(self.email, self.auth_code)
                 server.sendmail(self.email, to, msg.as_string())
                 server.quit()  # 显式关闭连接
-                self.log.success(f"邮件发送成功到 {to}")
+                print(f"邮件发送成功到 {to}")
                 return True
             except (smtplib.SMTPException, OSError) as e:
-                self.log.info(f"尝试 {i+1}/{max_retries} 失败: {e}")
+                print(f"尝试 {i+1}/{max_retries} 失败: {e}")
                 traceback.print_exc()  # 打印详细堆栈
                 if i < max_retries - 1:
                     time.sleep(5)
@@ -35,7 +33,7 @@ class QQSender:
                         server.quit()  # 确保连接关闭
                     except:
                         pass
-        self.log.error("所有重试均失败")
+        print("所有重试均失败")
         return False
 
 # 使用示例

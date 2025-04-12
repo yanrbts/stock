@@ -1,5 +1,6 @@
 asyncio
 akshare
-click
+pandas_ta
+schedule
 tabulate
 tqdm

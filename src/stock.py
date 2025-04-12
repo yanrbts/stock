@@ -5,13 +5,16 @@ import signal,sys
 from datetime import datetime, timedelta
 from tqdm import tqdm
 from threading import Thread
-import os, csv
+import os, csv, time
+import schedule
 from log import CPrint
+from email_sender import QQSender
+from validator import PredictionValidator
 
 log = CPrint()
 
 class Stock:
-    """ 个股"""
+    """ 个股 """
 
     def __init__(self, symbol):
         self.symbol = symbol
@@ -27,6 +30,10 @@ class Stock:
         }
         self.score = 0
         self.index_trend = 0
+
+        # 邮件发送相关
+        self.email_sender = QQSender("772166784@qq.com", "wdjvptwkfcpmbfie")
+        self.receiver_email = "772166784@qq.com"
     
     def get_stock_score(self):
         """ 按照指定规则对股票进行评分 """
@@ -46,6 +53,10 @@ class Stock:
         macd_slow = details.get("macd_slow", 0)
         macd_diff = details.get("macd_diff", 0)
         ma5 = details.get("ma5", 0)
+
+        # 如果 rsi 是 Series，取最新值
+        if isinstance(rsi, pd.Series):
+            rsi = rsi.iloc[-1] if not rsi.empty else 0
         
         # 计算量比
         volume_ratio = volume / avg_volume if avg_volume > 0 else 0
@@ -94,8 +105,6 @@ class Stock:
         if self.df.empty:
             log.error(f"未获取到 {self.symbol} 的数据")
             return False
-        
-        # log.info(f"获取到 {len(self.df)} 条数据")
 
         if len(self.df) < 26:
             log.error("数据不足 26 天，无法计算调整后的 MACD")
@@ -209,7 +218,9 @@ class Stock:
                 self.result["details"]["total_change"] = total_change
                 self.result["details"]["ma5"] = self.df['ma5'].iloc[-1]
                 self.result["details"]["avg_volume"] = self.df['avg_volume'].iloc[-1]
-                self.result["details"]["rsi"] = self.df['rsi'].iloc[-1]
+                # 修复：存储整个 RSI Series
+                self.result["details"]["rsi"] = self.df['rsi'] 
+
                 self.result["details"]["macd_fast"] = self.df['MACD_12_26_9'].iloc[-1]
                 self.result["details"]["macd_slow"] = self.df['MACDs_12_26_9'].iloc[-1]
                 self.result["details"]["macd_diff"] = self.df['MACDh_12_26_9'].iloc[-1]
@@ -243,7 +254,10 @@ class Stock:
         if "total_change" in self.result["details"]:
             log.info(f"最近 20 天总变化: {self.result['details']['total_change']:.2f}%")
         if "rsi" in self.result["details"]:
-            log.info(f"RSI: {self.result['details']['rsi']:.2f}")
+            rsi = self.result["details"].get("rsi", 0)
+            if isinstance(rsi, pd.Series):
+                rsi = rsi.iloc[-1] if not rsi.empty else 0
+                log.info(f"RSI: {rsi:.2f}")
         if "macd_fast" in self.result["details"]:
             log.info(f"MACD 快线: {self.result['details']['macd_fast']:.2f}, 慢线: {self.result['details']['macd_slow']:.2f}")
         if "ma5" in self.result["details"]:
@@ -257,6 +271,12 @@ class Stock:
 
         current_date = datetime.now().strftime("%Y-%m-%d")
         headers = ["日期", "股票代码", "股票名称", "评分", "最新价", "预测趋势", "RSI", "MACD快线", "MACD慢线", "5日均线"]
+        
+        # 如果 rsi 是 Series，取最新值
+        rsi = self.result["details"].get("rsi", 0)
+        if isinstance(rsi, pd.Series):
+            rsi = rsi.iloc[-1] if not rsi.empty else 0
+        
         data = {
             "日期": current_date,
             "股票代码": self.result["symbol"],
@@ -264,7 +284,7 @@ class Stock:
             "评分": self.score,
             "最新价": self.result["details"].get("price", 0),
             "预测趋势": self.result["real_time_trend"],  # 当前趋势作为预测依据
-            "RSI": self.result["details"].get("rsi", 0),
+            "RSI": rsi,
             "MACD快线": self.result["details"].get("macd_fast", 0),
             "MACD慢线": self.result["details"].get("macd_slow", 0),
             "5日均线": self.result["details"].get("ma5", 0)
@@ -275,7 +295,7 @@ class Stock:
             writer = csv.DictWriter(f, fieldnames=headers)
             if not file_exists:
                 writer.writeheader()  # 仅在文件不存在时写入表头
-            writer.writerow(data)
+            writer.writerow(data) 
         log.success(f"最佳股票数据已保存到 {filename}")
 
 
@@ -296,7 +316,7 @@ class Market:
         except Exception as e:
             log.error(f"获取大盘数据失败: {e}")
 
-def main():
+def stock_analysis():
     # 获取所有沪深京 A 股实时行情数据
 
     log.info("获取所有 A 股实时行情数据...")
@@ -311,8 +331,7 @@ def main():
     
     # 遍历所有股票
     total_rows = df_spot.shape[0]
-    for _, row in tqdm(df_spot.iterrows(), total=total_rows, desc="数据处理", position=0, leave=True):
-    # for _, row in df_spot.head(50).iterrows():
+    for _, row in tqdm(df_spot.head(200).iterrows(), total=200, desc="数据处理", position=0, leave=True):
         symbol = row['代码']
         stk = Stock(symbol)
         
@@ -345,16 +364,63 @@ def main():
             log.warning("大盘下跌趋势，谨慎操作")
 
         # RSI 趋势
-        rsi_trend = best_stock.result["details"]["rsi"].iloc[-1] - best_stock.result["details"]["rsi"].iloc[-5]
-        if rsi_trend > 0 and best_stock.result["details"]["rsi"].iloc[-1] < 70:
-            log.info("RSI 上涨但未超买，买入信号增强")
+        if isinstance(best_stock.result["details"]["rsi"], pd.Series) and len(best_stock.result["details"]["rsi"]) >= 5:
+            rsi_trend = best_stock.result["details"]["rsi"].iloc[-1] - best_stock.result["details"]["rsi"].iloc[-5]
+            if rsi_trend > 0 and best_stock.result["details"]["rsi"].iloc[-1] < 70:
+                log.info("RSI 上涨但未超买，买入信号增强")
+        else:
+            log.warning("RSI 数据无效或不足，无法计算趋势")
         
         # 评分阈值
-        if best_score > 60 and 40 < best_stock.result["details"]["rsi"] < 65:
+        rsi_value = best_stock.result["details"]["rsi"].iloc[-1] \
+                    if isinstance(best_stock.result["details"]["rsi"], pd.Series) \
+                    else best_stock.result["details"]["rsi"]
+
+        if best_score > 60 and 40 < best_stock.result["details"]["rsi"].iloc[-1] < 65:
+            email_body = "=== 股票分析结果 ===\n\n"
+            email_body += f"股票: {best_stock.full_symbol} 评分: {best_score:.2f} 股票名称: ({best_stock.result['name']})\n"
+            subject = f"股票分析结果 - {datetime.now().strftime('%Y-%m-%d')}"
+            best_stock.email_sender.send(best_stock.receiver_email, subject, email_body)
+
             log.success(f"{best_stock.full_symbol} 符合买入条件，评分: {best_score:.2f}")
+        
+        # 保存保存到 CSV 文件
+        best_stock.save_to_csv()
     else:
         log.error("未找到任何有效股票评分")
-    
+
+def validate_all_predictions():
+    ''' 验证所有预测结果 '''
+
+    log.info("验证所有预测结果...")
+
+    validator = PredictionValidator(
+        csv_file="best_stock.csv",
+        forecast_days=5,
+        sender_email="772166784@qq.com",       
+        sender_password="wdjvptwkfcpmbfie",
+        receiver_email="772166784@qq.com"
+    )
+
+    validator.validate_all_predictions()
+def run_service():
+    """ 启动定时服务,每天14:00执行 main() """
+
+    log.info("启动股票分析服务...")
+    schedule.every().day.at("23:22").do(stock_analysis)
+    log.info("分析任务,每天23:01执行")
+    schedule.every().day.at("23:28").do(validate_all_predictions)
+    log.info("验证任务,每天22:00执行")
+    while True:
+        try:
+            schedule.run_pending()
+            time.sleep(60)  # 每分钟检查一次
+        except KeyboardInterrupt:
+            log.success("服务收到终止信号，退出...")
+            break
+        except Exception as e:
+            log.error(f"服务运行中出错: {e}")
+            time.sleep(60)  # 出错后等待1分钟继续
 
 def signal_handler(sig, frame):
     log.success(f"Received KeyboardInterrupt. Cleaning up...")
@@ -362,4 +428,4 @@ def signal_handler(sig, frame):
 
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)
-    main()
+    run_service()

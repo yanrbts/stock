@@ -483,8 +483,8 @@ def signal_handler(sig, frame):
 def parse_args():
     """ 解析命令行参数 """
     parser = argparse.ArgumentParser(description="Stock Options")
-    parser.add_argument("-s", "--atime", type=str, default="15:30", help="Analyze stock launch time")
-    parser.add_argument("-v", "--vtime", type=str, default="18:00", help="Verify startup time")
+    parser.add_argument("-s", "--atime", type=str, default="15:30", help="Analyze stock launch time,default: 15:30")
+    parser.add_argument("-v", "--vtime", type=str, default="18:00", help="Verify startup time, default: 18:00")
     parser.add_argument("-e", "--email", type=str, default="772166784@qq.com", help="Email address")
     parser.add_argument("-p", "--emailpwd", type=str, default="wdjvptwkfcpmbfie", help="Email password")
     parser.add_argument("-f", "--fday", type=int, default=5, help="Forecast days default: 5")

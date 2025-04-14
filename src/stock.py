@@ -6,12 +6,14 @@ from datetime import datetime, timedelta
 from tqdm import tqdm
 from threading import Thread
 import os, csv, time
+import argparse
 import schedule
 from log import CPrint
 from email_sender import QQSender
 from validator import PredictionValidator
 
 log = CPrint()
+args = None
 
 class Stock:
     """ 个股 """
@@ -110,10 +112,44 @@ class Stock:
             log.error("数据不足 26 天，无法计算调整后的 MACD")
             return False
         
-        # 检查收盘价数据
+        # 确保 '收盘' 列存在
+        if '收盘' not in self.df.columns:
+            log.error(f"{self.symbol} 的数据缺少 '收盘' 列")
+            return False
+        
+        # 检查空值比例
+        null_count = self.df['收盘'].isnull().sum()
+        null_ratio = null_count / len(self.df)
+        if null_count > 0:
+            log.warning(f"收盘价存在 {null_count} 个空值，占比 {null_ratio:.2%}")
+            if null_ratio > 0.1:  # 空值超过 10%
+                log.error("空值比例过高，数据不可靠，跳过 MACD 计算")
+                return False
+    
+        # 仅使用 ffill 填充
         if self.df['收盘'].isnull().any():
-            log.warning("收盘价中存在空值，将填充为前值")
+            log.info("尝试向前填充收盘价空值")
             self.df['收盘'] = self.df['收盘'].fillna(method='ffill')
+        
+        # 检查是否仍有空值
+        if self.df['收盘'].isnull().any():
+            log.error("收盘价填充失败，仍存在空值（可能是首行空值）")
+            return False
+        
+        # 确保收盘价为数值类型
+        try:
+            self.df['收盘'] = pd.to_numeric(self.df['收盘'], errors='coerce')
+            if self.df['收盘'].isnull().any():
+                log.error("收盘价转换为数值类型后仍存在空值")
+                return False
+        except Exception as e:
+            log.error(f"收盘价转换数值类型失败: {e}")
+            return False
+        
+        # 检查价格合理性
+        if (self.df['收盘'] <= 0).any():
+            log.error("收盘价存在非正值，数据异常")
+            return False
         
         # 计算调整后的 MACD
         try:
@@ -245,7 +281,6 @@ class Stock:
         log.info(f"实时趋势: {self.result['real_time_trend']} (涨跌幅: {self.result['pct_chg']:.2f}%)")
         log.info(f"历史趋势 (最近 20 天): {self.result['historical_trend']}")
         
-        print("\n")
         log.info("=== 详细信息 ===")
         if "price" in self.result["details"]:
             log.info(f"最新价: {self.result['details']['price']}")
@@ -263,7 +298,6 @@ class Stock:
         if "ma5" in self.result["details"]:
             log.info(f"5 日均线: {self.result['details']['ma5']:.2f}")
 
-        print("\n")
         log.success(f"综合评分: {self.score:.2f}")
 
     def save_to_csv(self, filename="best_stock.csv"):
@@ -331,7 +365,7 @@ def stock_analysis():
     
     # 遍历所有股票
     total_rows = df_spot.shape[0]
-    for _, row in tqdm(df_spot.head(200).iterrows(), total=200, desc="数据处理", position=0, leave=True):
+    for _, row in tqdm(df_spot.head(300).iterrows(), total=300, desc="数据处理", position=0, leave=True):
         symbol = row['代码']
         stk = Stock(symbol)
         
@@ -378,11 +412,13 @@ def stock_analysis():
 
         if best_score > 60 and 40 < best_stock.result["details"]["rsi"].iloc[-1] < 65:
             email_body = "=== 股票分析结果 ===\n\n"
-            email_body += f"股票: {best_stock.full_symbol} 评分: {best_score:.2f} 股票名称: ({best_stock.result['name']})\n"
-            subject = f"股票分析结果 - {datetime.now().strftime('%Y-%m-%d')}"
+            email_body += f"潜力股票: {best_stock.full_symbol} 评分: {best_score:.2f} 股票名称: ({best_stock.result['name']})\n"
+            subject = f"股票分析结果 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             best_stock.email_sender.send(best_stock.receiver_email, subject, email_body)
 
             log.success(f"{best_stock.full_symbol} 符合买入条件，评分: {best_score:.2f}")
+        else:
+            log.warning(f"{best_stock.full_symbol} 评分高但是不符合买入条件,需要谨慎, 评分: {best_score:.2f}")
         
         # 保存保存到 CSV 文件
         best_stock.save_to_csv()
@@ -391,26 +427,31 @@ def stock_analysis():
 
 def validate_all_predictions():
     ''' 验证所有预测结果 '''
+    global args
 
     log.info("验证所有预测结果...")
 
     validator = PredictionValidator(
         csv_file="best_stock.csv",
-        forecast_days=5,
-        sender_email="772166784@qq.com",       
-        sender_password="wdjvptwkfcpmbfie",
-        receiver_email="772166784@qq.com"
+        forecast_days=args.fday,
+        sender_email=args.email,       
+        sender_password=args.emailpwd,
+        receiver_email=args.email
     )
 
     validator.validate_all_predictions()
 def run_service():
-    """ 启动定时服务,每天14:00执行 main() """
+    """ 启动定时服务 """
+    global args
+    args = parse_args()
+
+    print(logo())
 
     log.info("启动股票分析服务...")
-    schedule.every().day.at("23:22").do(stock_analysis)
-    log.info("分析任务,每天23:01执行")
-    schedule.every().day.at("23:28").do(validate_all_predictions)
-    log.info("验证任务,每天22:00执行")
+    schedule.every().day.at(args.atime).do(stock_analysis)
+    log.info(f"分析任务,每天{args.atime}执行")
+    schedule.every().day.at(args.vtime).do(validate_all_predictions)
+    log.info(f"验证任务,每天{args.vtime}执行")
     while True:
         try:
             schedule.run_pending()
@@ -422,9 +463,33 @@ def run_service():
             log.error(f"服务运行中出错: {e}")
             time.sleep(60)  # 出错后等待1分钟继续
 
+def logo():
+    return f"""\033[92m              
+         _           _   
+     ___| |_ ___ ___| |_ 
+    |_ -|  _| . |  _| '_|
+    |___|_| |___|___|_,_|
+                                        
+    \033[95m Welcome to Stock \033[92m
+    \033[95m Version : 1.0.0 \033[92m
+    \033[95m Author : yanruibing \033[92m
+    \033[0m 
+    """
+
 def signal_handler(sig, frame):
     log.success(f"Received KeyboardInterrupt. Cleaning up...")
     sys.exit(0)
+
+def parse_args():
+    """ 解析命令行参数 """
+    parser = argparse.ArgumentParser(description="Stock Options")
+    parser.add_argument("-s", "--atime", type=str, default="15:30", help="Analyze stock launch time")
+    parser.add_argument("-v", "--vtime", type=str, default="18:00", help="Verify startup time")
+    parser.add_argument("-e", "--email", type=str, default="772166784@qq.com", help="Email address")
+    parser.add_argument("-p", "--emailpwd", type=str, default="wdjvptwkfcpmbfie", help="Email password")
+    parser.add_argument("-f", "--fday", type=int, default=5, help="Forecast days default: 5")
+    # parser.add_argument("--port", type=int, default=8881, help="DCS Server port (default: 8881)")
+    return parser.parse_args()
 
 if __name__ == "__main__":
     signal.signal(signal.SIGINT, signal_handler)

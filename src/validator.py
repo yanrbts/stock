@@ -35,6 +35,28 @@ class PredictionValidator:
             return
         self.df = pd.read_csv(self.csv_file, encoding='utf-8')
         self.log.info(f"已加载 {self.csv_file}，共 {len(self.df)} 条记录")
+    
+    def get_trading_date(self, start_date, forecast_days):
+        """
+        计算从 start_date 开始，经过 forecast_days 个交易日后的日期（排除周六、周日）
+        
+        参数：
+            start_date (datetime): 起始日期
+            forecast_days (int): 要计算的交易日数
+        
+        返回：
+            datetime: 调整后的目标日期
+        """
+        current_date = start_date
+        trading_days_count = 0
+        
+        while trading_days_count < forecast_days:
+            current_date += timedelta(days=1)
+            # 周一=0, 周日=6，排除周六(5)和周日(6)
+            if current_date.weekday() < 5:
+                trading_days_count += 1
+        
+        return current_date
 
     def get_future_price(self, symbol, start_date, target_date):
         """获取目标日期的收盘价"""
@@ -71,7 +93,8 @@ class PredictionValidator:
     def validate_single_prediction(self, row, current_date):
         """验证单条预测的准确性"""
         predict_date = datetime.strptime(row["日期"], "%Y-%m-%d")
-        target_date = predict_date + timedelta(days=self.forecast_days)
+        # 使用独立方法计算调整后的 target_date
+        target_date = self.get_trading_date(predict_date, self.forecast_days)
         
         # 检查是否到达验证日期
         if current_date < target_date:

@@ -452,6 +452,7 @@ def run_service():
     log.info(f"分析任务,每天{args.atime}执行")
     schedule.every().day.at(args.vtime).do(validate_all_predictions)
     log.info(f"验证任务,每天{args.vtime}执行")
+    log.info(f"预测{args.fday}天的数据趋势...")
     while True:
         try:
             schedule.run_pending()

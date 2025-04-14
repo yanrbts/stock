@@ -365,7 +365,7 @@ def stock_analysis():
     
     # 遍历所有股票
     total_rows = df_spot.shape[0]
-    for _, row in tqdm(df_spot.head(300).iterrows(), total=300, desc="数据处理", position=0, leave=True):
+    for _, row in tqdm(df_spot.iterrows(), total=total_rows, desc="数据处理", position=0, leave=True):
         symbol = row['代码']
         stk = Stock(symbol)
         

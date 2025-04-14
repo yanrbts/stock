@@ -24,11 +24,11 @@ pip3 install -r /opt/stock/requirements.txt
 # 4. 创建 systemd 服务文件
 cat <<EOF | sudo tee /etc/systemd/system/$SERVICE_NAME.service
 [Unit]
-Description=STWS WebSocket & TCP Server
+Description=Stock Server
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/python3 $INSTALL_DIR/$SCRIPT_NAME -f 2
+ExecStart=/usr/bin/python3 $INSTALL_DIR/$SCRIPT_NAME -f 2 -s 17:00 -v 20:00
 WorkingDirectory=$INSTALL_DIR
 Restart=always
 User=nobody

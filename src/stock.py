@@ -34,8 +34,8 @@ class Stock:
         self.index_trend = 0
 
         # 邮件发送相关
-        self.email_sender = QQSender("772166784@qq.com", "wdjvptwkfcpmbfie")
-        self.receiver_email = "772166784@qq.com"
+        self.email_sender = QQSender(args.email, args.emailpwd)
+        self.receiver_email = args.email
     
     def get_stock_score(self):
         """ 按照指定规则对股票进行评分 """
@@ -101,6 +101,20 @@ class Stock:
 
         return score
     
+    def compute_macd(self, close_series, fast=12, slow=26, signal=9, amplify=2):
+        """
+        手动计算 MACD
+        """
+        ema_fast = close_series.ewm(span=fast, adjust=False).mean()
+        ema_slow = close_series.ewm(span=slow, adjust=False).mean()
+        dif = ema_fast - ema_slow
+        dea = dif.ewm(span=signal, adjust=False).mean()
+        macd_hist = (dif - dea) * amplify
+        return pd.DataFrame({
+            'macd_fast': dif,
+            'macd_slow': dea,
+            'macd_diff': macd_hist
+        })
     def get_stock_data_with_macd(self):
         """ 获取股票历史数据并计算 MACD """
 
@@ -154,7 +168,8 @@ class Stock:
         # 计算调整后的 MACD
         try:
             # 使用 fast=12, slow=20, signal=9 适应 22 条数据
-            macd = ta.macd(self.df['收盘'], fast=12, slow=26, signal=9)
+            # macd = ta.macd(self.df['收盘'], fast=12, slow=26, signal=9)
+            macd = self.compute_macd(self.df['收盘'])
             
             if macd is None or macd.empty:
                 return False
@@ -169,7 +184,7 @@ class Stock:
             # })
             
         except Exception as e:
-            log.error(f"MACD 计算出错: {e}")
+            log.error(f"股票代码: {self.symbol} MACD 计算出错: {e}")
             return False
         
         return True
@@ -225,7 +240,6 @@ class Stock:
             )
             
             if self.get_stock_data_with_macd() == False:
-                log.error("MACD 计算失败，可能数据仍有问题")
                 return False
 
             if not self.df.empty:
@@ -257,9 +271,9 @@ class Stock:
                 # 修复：存储整个 RSI Series
                 self.result["details"]["rsi"] = self.df['rsi'] 
 
-                self.result["details"]["macd_fast"] = self.df['MACD_12_26_9'].iloc[-1]
-                self.result["details"]["macd_slow"] = self.df['MACDs_12_26_9'].iloc[-1]
-                self.result["details"]["macd_diff"] = self.df['MACDh_12_26_9'].iloc[-1]
+                self.result["details"]["macd_fast"] = self.df['macd_fast'].iloc[-1]
+                self.result["details"]["macd_slow"] = self.df['macd_slow'].iloc[-1]
+                self.result["details"]["macd_diff"] = self.df['macd_diff'].iloc[-1]
                 
                 # log.success(f"历史数据获取成功: 最近 26 天总变化 {total_change:.2f}%")
             else:
@@ -300,7 +314,7 @@ class Stock:
 
         log.success(f"综合评分: {self.score:.2f}")
 
-    def save_to_csv(self, filename="best_stock.csv"):
+    def save_to_csv(self, filename="/tmp/best_stock.csv"):
         """将最佳股票数据保存到 CSV 文件"""
 
         current_date = datetime.now().strftime("%Y-%m-%d")
@@ -432,7 +446,7 @@ def validate_all_predictions():
     log.info("验证所有预测结果...")
 
     validator = PredictionValidator(
-        csv_file="best_stock.csv",
+        csv_file="/tmp/best_stock.csv",
         forecast_days=args.fday,
         sender_email=args.email,       
         sender_password=args.emailpwd,

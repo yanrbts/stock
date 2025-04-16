@@ -376,7 +376,7 @@ def stock_analysis():
     
     # 存储每只股票的实例和评分
     stock_scores = []
-    
+    faildnum = 0
     # 遍历所有股票
     total_rows = df_spot.shape[0]
     for _, row in tqdm(df_spot.iterrows(), total=total_rows, desc="数据处理", position=0, leave=True):
@@ -389,6 +389,7 @@ def stock_analysis():
         
         # 获取历史数据和技术指标
         if stk.get_stock_hist(days=60) == False:
+            faildnum += 1
             continue
         
         # 计算评分
@@ -424,9 +425,12 @@ def stock_analysis():
                     if isinstance(best_stock.result["details"]["rsi"], pd.Series) \
                     else best_stock.result["details"]["rsi"]
 
+        log.warning(f"失败条数：{faildnum}")
+
         if best_score > 60 and 40 < best_stock.result["details"]["rsi"].iloc[-1] < 65:
             email_body = "=== 股票分析结果 ===\n\n"
             email_body += f"潜力股票: {best_stock.full_symbol} 评分: {best_score:.2f} 股票名称: ({best_stock.result['name']})\n"
+            email_body += f"失败条数: {faildnum}\n"
             subject = f"股票分析结果 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
             best_stock.email_sender.send(best_stock.receiver_email, subject, email_body)
 

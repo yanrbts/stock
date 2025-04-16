@@ -123,7 +123,7 @@ class Stock:
             return False
 
         if len(self.df) < 26:
-            log.error("数据不足 26 天，无法计算调整后的 MACD")
+            log.error(f"{self.symbol} 数据不足 26 天，无法计算调整后的 MACD")
             return False
         
         # 确保 '收盘' 列存在
@@ -176,13 +176,6 @@ class Stock:
             
             self.df = pd.concat([self.df, macd], axis=1)
             
-            # 重命名列名
-            # self.df = self.df.rename(columns={
-            #     'MACD_12_26_9': 'macd_fast',
-            #     'MACDs_12_26_9': 'macd_slow',
-            #     'MACDh_12_26_9': 'macd_diff'
-            # })
-            
         except Exception as e:
             log.error(f"股票代码: {self.symbol} MACD 计算出错: {e}")
             return False
@@ -228,7 +221,6 @@ class Stock:
         try:
             start_date = (datetime.now() - timedelta(days=days)).strftime("%Y%m%d")
             end_date = datetime.now().strftime("%Y%m%d")
-            # log.info(f"获取 {self.full_symbol} 的历史数据 ({start_date} 至 {end_date})...")
             
             # 获取指定时间段的历史数据
             self.df = ak.stock_zh_a_hist(
@@ -379,7 +371,11 @@ def stock_analysis():
     faildnum = 0
     # 遍历所有股票
     total_rows = df_spot.shape[0]
-    for _, row in tqdm(df_spot.iterrows(), total=total_rows, desc="数据处理", position=0, leave=True):
+    iterator = df_spot.iterrows()
+    if args.progress:
+        iterator = tqdm(iterator, total=total_rows, desc="数据处理", position=0, leave=True)
+    
+    for _, row in iterator:
         symbol = row['代码']
         stk = Stock(symbol)
         
@@ -427,17 +423,18 @@ def stock_analysis():
 
         log.warning(f"失败条数：{faildnum}")
 
-        if best_score > 60 and 40 < best_stock.result["details"]["rsi"].iloc[-1] < 65:
-            email_body = "=== 股票分析结果 ===\n\n"
-            email_body += f"潜力股票: {best_stock.full_symbol} 评分: {best_score:.2f} 股票名称: ({best_stock.result['name']})\n"
-            email_body += f"失败条数: {faildnum}\n"
-            subject = f"股票分析结果 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
-            best_stock.email_sender.send(best_stock.receiver_email, subject, email_body)
+        email_body = "=== 股票分析结果 ===\n\n"
+        email_body += f"潜力股票: {best_stock.full_symbol} 评分: {best_score:.2f} 股票名称: ({best_stock.result['name']})\n"
+        email_body += f"失败条数: {faildnum}\n"
+        subject = f"股票分析结果 - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
 
+        if best_score > 60 and 40 < rsi_value < 65:
             log.success(f"{best_stock.full_symbol} 符合买入条件，评分: {best_score:.2f}")
         else:
+            email_body += f"不符合买入条件,需要谨慎, RSI: {rsi_value:.2f}"
             log.warning(f"{best_stock.full_symbol} 评分高但是不符合买入条件,需要谨慎, 评分: {best_score:.2f}")
         
+        best_stock.email_sender.send(best_stock.receiver_email, subject, email_body)
         # 保存保存到 CSV 文件
         best_stock.save_to_csv()
     else:
@@ -507,7 +504,7 @@ def parse_args():
     parser.add_argument("-e", "--email", type=str, default="772166784@qq.com", help="Email address")
     parser.add_argument("-p", "--emailpwd", type=str, default="wdjvptwkfcpmbfie", help="Email password")
     parser.add_argument("-f", "--fday", type=int, default=5, help="Forecast days default: 5")
-    # parser.add_argument("--port", type=int, default=8881, help="DCS Server port (default: 8881)")
+    parser.add_argument("--progress", action="store_true", default=False, help="Show progress bar (default: False)")
     return parser.parse_args()
 
 if __name__ == "__main__":

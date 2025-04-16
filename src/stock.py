@@ -193,8 +193,6 @@ class Stock:
 
         # 获取实时数据
         try:
-            # log.info(f"获取 {self.full_symbol} 的实时数据...")
-            
             if not stock_data.empty:
                 stock_row = stock_data.iloc[0]
                 self.result["name"] = stock_row['名称']
@@ -391,8 +389,6 @@ def stock_analysis():
         # 计算评分
         score = stk.get_stock_score()
         stock_scores.append((stk, score))
-    
-        # log.info(f"股票 {stk.full_symbol} ({stk.result['name']}) 最近26天涨跌幅 {stk.result['details']['total_change']:.2f}% 评分: {score:.2f}")
     
     market = Market("sh000001")
     market.get_stock_market()
